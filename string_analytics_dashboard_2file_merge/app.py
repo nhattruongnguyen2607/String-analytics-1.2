@@ -304,117 +304,116 @@ with tabs[1]:
 # ---------------------------
 # Tab: Time Analysis
 # ---------------------------
+# ---------------------------
+# Tab: Time Analysis (Đã cập nhật theo yêu cầu)
+# ---------------------------
 with tabs[2]:
-    st.subheader("Phân tích theo thời gian (day-by-day theo từng label)")
+    st.subheader("Phân tích chi tiết hiệu suất String theo thời gian")
 
-    required_cols = ["date", "label", "Performance"]
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        st.error(f"Thiếu cột bắt buộc: {missing}. Cần có: date, label, Performance")
+    # 1. Kiểm tra cột Date
+    if not datetime_cols:
+        st.error("Không tìm thấy cột thời gian (datetime). Vui lòng kiểm tra lại file input.")
     else:
-        # parse date mạnh hơn nếu cần
-        if "date" in df.columns and df["date"].dtype == "object":
-            df["date"] = pd.to_datetime(df["date"], errors="coerce", infer_datetime_format=True)
+        # Chọn cột ngày (thường là 'date')
+        date_col = st.selectbox("Cột thời gian", options=datetime_cols, index=0, label_visibility="collapsed")
+        
+        # Đảm bảo dữ liệu được sort theo ngày
+        df_time = df.sort_values(by=date_col).copy()
+        
+        # ---------------------------
+        # A. BỘ LỌC (FILTERS)
+        # ---------------------------
+        st.markdown("##### 1. Bộ lọc dữ liệu")
+        
+        # A1. Lọc theo khoảng thời gian
+        min_date = df_time[date_col].min().date()
+        max_date = df_time[date_col].max().date()
+        
+        c_date1, c_date2 = st.columns(2)
+        with c_date1:
+            start_date = st.date_input("Từ ngày", value=min_date, min_value=min_date, max_value=max_date)
+        with c_date2:
+            end_date = st.date_input("Đến ngày", value=max_date, min_value=min_date, max_value=max_date)
+            
+        # A2. Các bộ lọc thuộc tính (Inverter, Capacity, Azimuth)
+        # Tạo danh sách unique values để đưa vào selectbox
+        # Lưu ý: Convert sang string để hiển thị cho đẹp và tránh lỗi sort
+        
+        all_inverters = sorted(df_time['Inverter'].dropna().astype(str).unique()) if 'Inverter' in df_time.columns else []
+        all_capacities = sorted(df_time['Capacity'].dropna().unique()) if 'Capacity' in df_time.columns else []
+        all_azimuths = sorted(df_time['String Azimuth'].dropna().unique()) if 'String Azimuth' in df_time.columns else []
 
-        if df["date"].isna().all():
-            st.error("Cột 'date' không parse được (toàn NA). Hãy kiểm tra format ngày.")
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            sel_inv = st.multiselect("Lọc Inverter", options=all_inverters)
+        with f2:
+            sel_cap = st.multiselect("Lọc Capacity", options=all_capacities)
+        with f3:
+            sel_azi = st.multiselect("Lọc Azimuth", options=all_azimuths)
+
+        # ---------------------------
+        # B. XỬ LÝ DATA THEO BỘ LỌC
+        # ---------------------------
+        
+        # 1. Lọc Time
+        mask = (df_time[date_col].dt.date >= start_date) & (df_time[date_col].dt.date <= end_date)
+        filtered_df = df_time.loc[mask]
+
+        # 2. Lọc Attributes (Nếu user không chọn gì thì lấy tất cả)
+        if sel_inv:
+            filtered_df = filtered_df[filtered_df['Inverter'].astype(str).isin(sel_inv)]
+        
+        if sel_cap:
+            filtered_df = filtered_df[filtered_df['Capacity'].isin(sel_cap)]
+            
+        if sel_azi:
+            filtered_df = filtered_df[filtered_df['String Azimuth'].isin(sel_azi)]
+
+        # ---------------------------
+        # C. VẼ BIỂU ĐỒ (LINE CHART)
+        # ---------------------------
+        st.markdown("##### 2. Biểu đồ biến thiên")
+        
+        if filtered_df.empty:
+            st.warning("Không có dữ liệu phù hợp với bộ lọc.")
         else:
-            left, right = st.columns([1, 2])
+            # Chọn chỉ số để vẽ (Mặc định là Performance)
+            metric_col = "Performance"
+            if "Performance" not in numeric_cols and len(numeric_cols) > 0:
+                metric_col = st.selectbox("Chọn chỉ số hiển thị trục Y", numeric_cols)
+            
+            # Cảnh báo nếu quá nhiều dây (String) được chọn -> Vẽ sẽ bị rối
+            num_strings = filtered_df['label'].nunique()
+            st.caption(f"Đang hiển thị **{num_strings}** string(s) trên biểu đồ.")
+            
+            if num_strings > 50:
+                st.warning(f"⚠️ Bạn đang chọn quá nhiều String ({num_strings}). Biểu đồ có thể bị chậm hoặc khó nhìn. Hãy lọc bớt Inverter hoặc Capacity.")
 
-            tmp0 = df.dropna(subset=["date"]).copy()
-            tmp0["label"] = tmp0["label"].astype(str)
+            # Vẽ biểu đồ Line
+            # x: Ngày, y: Performance, color: label (tên string)
+            fig = px.line(
+                filtered_df, 
+                x=date_col, 
+                y=metric_col, 
+                color='label',
+                markers=True, # Hiển thị điểm tròn trên dòng để dễ nhìn dữ liệu ngày
+                hover_data=['Inverter', 'Capacity', 'String Azimuth'], # Khi rê chuột vào sẽ hiện thêm thông tin này
+                title=f"Biến thiên {metric_col} theo ngày (Day-by-Day)"
+            )
+            
+            # Tinh chỉnh biểu đồ cho đẹp
+            fig.update_layout(
+                xaxis_title="Ngày",
+                yaxis_title=metric_col,
+                legend_title="String Label",
+                hovermode="x unified" # Hiển thị so sánh tất cả các line tại 1 điểm ngày
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
 
-            min_date = tmp0["date"].min().date()
-            max_date = tmp0["date"].max().date()
-
-            with left:
-                st.markdown("#### Bộ lọc")
-
-                # 1) lọc ngày
-                date_range = st.date_input(
-                    "Chọn khoảng ngày phân tích",
-                    value=(min_date, max_date),
-                    min_value=min_date,
-                    max_value=max_date,
-                )
-                if isinstance(date_range, tuple) and len(date_range) == 2:
-                    start_date, end_date = date_range
-                else:
-                    start_date, end_date = min_date, max_date
-
-                # 2) lọc inverter
-                inverter_vals = sorted(tmp0["Inverter"].dropna().astype(str).unique().tolist()) if "Inverter" in tmp0.columns else []
-                inv_sel = st.multiselect("Inverter", options=inverter_vals, default=inverter_vals[:]) if inverter_vals else []
-
-                # 3) lọc string azimuth
-                az_vals = sorted(tmp0["String Azimuth"].dropna().astype(str).unique().tolist()) if "String Azimuth" in tmp0.columns else []
-                az_sel = st.multiselect("String Azimuth", options=az_vals, default=az_vals[:]) if az_vals else []
-
-                # 4) lọc capacity (range nếu là numeric, nếu không thì multiselect)
-                cap_mode, cap_min, cap_max, cap_sel = None, None, None, None
-                if "Capacity" in tmp0.columns:
-                    if pd.api.types.is_numeric_dtype(tmp0["Capacity"]):
-                        cap_mode = "range"
-                        cap_min0 = float(np.nanmin(tmp0["Capacity"].values))
-                        cap_max0 = float(np.nanmax(tmp0["Capacity"].values))
-                        cap_min, cap_max = st.slider(
-                            "Capacity (range)",
-                            min_value=cap_min0,
-                            max_value=cap_max0,
-                            value=(cap_min0, cap_max0),
-                        )
-                    else:
-                        cap_mode = "set"
-                        cap_vals = sorted(tmp0["Capacity"].dropna().astype(str).unique().tolist())
-                        cap_sel = st.multiselect("Capacity", options=cap_vals, default=cap_vals[:])
-
-                # 5) chọn label để vẽ (đỡ quá nhiều line)
-                labels = sorted(tmp0["label"].unique().tolist())
-                default_labels = labels[: min(10, len(labels))]
-                label_sel = st.multiselect("Label", options=labels, default=default_labels)
-
-                agg = st.selectbox("Phép tổng hợp theo ngày", options=["mean", "median", "min", "max"], index=0)
-                show_table = st.checkbox("Hiện bảng sau filter + group", value=False)
-
-            # --- apply filters ---
-            tmp = tmp0[(tmp0["date"].dt.date >= start_date) & (tmp0["date"].dt.date <= end_date)].copy()
-
-            if inverter_vals and inv_sel:
-                tmp = tmp[tmp["Inverter"].astype(str).isin(inv_sel)]
-            if az_vals and az_sel:
-                tmp = tmp[tmp["String Azimuth"].astype(str).isin(az_sel)]
-
-            if "Capacity" in tmp.columns:
-                if cap_mode == "range" and cap_min is not None and cap_max is not None:
-                    tmp = tmp[(tmp["Capacity"] >= cap_min) & (tmp["Capacity"] <= cap_max)]
-                elif cap_mode == "set" and cap_sel is not None:
-                    tmp = tmp[tmp["Capacity"].astype(str).isin(cap_sel)]
-
-            if label_sel:
-                tmp = tmp[tmp["label"].astype(str).isin(label_sel)]
-
-            if tmp.empty:
-                st.warning("Không có dữ liệu sau khi lọc.")
-            else:
-                # day-by-day theo label
-                tmp["_day"] = tmp["date"].dt.to_period("D").dt.to_timestamp()
-                ts = tmp.groupby(["_day", "label"])["Performance"].agg(agg).reset_index()
-
-                with right:
-                    fig = px.line(
-                        ts,
-                        x="_day",
-                        y="Performance",
-                        color="label",
-                        markers=True,
-                        title=f"Performance ({agg}) theo ngày - mỗi label là 1 đường",
-                    )
-                    fig.update_layout(margin=dict(l=10, r=10, t=50, b=10), legend_title_text="label")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                if show_table:
-                    st.dataframe(ts.sort_values(["_day", "label"]), use_container_width=True)
-
+            # Hiện bảng dữ liệu thô bên dưới nếu cần soi chi tiết
+            with st.expander("Xem dữ liệu chi tiết của biểu đồ"):
+                st.dataframe(filtered_df[[date_col, 'label', metric_col, 'Inverter', 'Capacity', 'String Azimuth']], use_container_width=True)
 # ---------------------------
 # Tab: Attr Analysis
 # ---------------------------
