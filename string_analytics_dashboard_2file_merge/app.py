@@ -379,6 +379,12 @@ if "merge_stats" not in st.session_state:
 if "merge_warns" not in st.session_state:
     st.session_state.merge_warns = []
 
+# Analysis state (apply filters only after clicking Generate)
+if "analysis_settings" not in st.session_state:
+    st.session_state.analysis_settings = None
+if "analysis_generated" not in st.session_state:
+    st.session_state.analysis_generated = False
+
 
 # ---- MERGE sidebar (Upload + merge settings) ----
 with tab_merge:
@@ -538,6 +544,13 @@ with tab_analysis:
             "date_range": date_range,
         }
 
+        st.markdown('---')
+        gen = st.button('⚙️ Generate', type='primary', use_container_width=True, key='btn_generate')
+        if gen:
+            st.session_state.analysis_settings = analysis_settings
+            st.session_state.analysis_generated = True
+            st.success('Đã Generate! Các bộ lọc/biểu đồ đã được áp dụng ở màn hình chính.')
+
 
 # =========================
 # 6) Main Page
@@ -612,25 +625,27 @@ with d2:
 st.markdown("---")
 st.markdown("## 📊 Analysis")
 
-if not analysis_settings:
-    st.info("Hãy qua tab **ANALYSIS** (sidebar) để cấu hình biểu đồ và bộ lọc.")
+settings = st.session_state.analysis_settings if st.session_state.analysis_generated else None
+
+if not settings:
+    st.info("Hãy qua tab **ANALYSIS** (sidebar), chọn bộ lọc và bấm **Generate** để áp dụng.")
 else:
     # 1) Basic numeric chart
     st.markdown("### 1) Biểu đồ thống kê cơ bản")
     render_basic_numeric_chart(
         merged,
-        metric_col=analysis_settings.get("metric_col"),
-        chart_type=analysis_settings.get("chart_type", "Histogram"),
+        metric_col=settings.get("metric_col"),
+        chart_type=settings.get("chart_type", "Histogram"),
     )
 
     # 2) Low-performance dashboard
     st.markdown("---")
     st.markdown("### 2) Dashboard: Low-performance labels")
 
-    label_col = analysis_settings.get("label_col")
-    plant_col = analysis_settings.get("plant_col")
-    perf_col = analysis_settings.get("perf_col")
-    date_col = analysis_settings.get("date_col")
+    label_col = settings.get("label_col")
+    plant_col = settings.get("plant_col")
+    perf_col = settings.get("perf_col")
+    date_col = settings.get("date_col")
 
     if not (label_col and plant_col and perf_col):
         st.info("Thiếu cột Plant/label/Performance trong dữ liệu merge. Không thể chạy dashboard low-performance.")
@@ -641,15 +656,15 @@ else:
             label_col=label_col,
             perf_col=perf_col,
             date_col=date_col,
-            inverter_col=analysis_settings.get("inverter_col"),
-            capacity_col=analysis_settings.get("capacity_col"),
-            az_col=analysis_settings.get("az_col"),
-            plant_sel=analysis_settings.get("plant_sel", []),
-            inv_sel=analysis_settings.get("inv_sel", []),
-            az_sel=analysis_settings.get("az_sel", []),
-            cap_range=analysis_settings.get("cap_range"),
-            cap_set=analysis_settings.get("cap_set"),
-            date_range=analysis_settings.get("date_range"),
+            inverter_col=settings.get("inverter_col"),
+            capacity_col=settings.get("capacity_col"),
+            az_col=settings.get("az_col"),
+            plant_sel=settings.get("plant_sel", []),
+            inv_sel=settings.get("inv_sel", []),
+            az_sel=settings.get("az_sel", []),
+            cap_range=settings.get("cap_range"),
+            cap_set=settings.get("cap_set"),
+            date_range=settings.get("date_range"),
         )
 
         render_low_performance_section(
@@ -658,5 +673,5 @@ else:
             label_col=label_col,
             perf_col=perf_col,
             date_col=date_col,
-            bottom_n=int(analysis_settings.get("bottom_n", 10)),
+            bottom_n=int(settings.get("bottom_n", 10)),
         )
