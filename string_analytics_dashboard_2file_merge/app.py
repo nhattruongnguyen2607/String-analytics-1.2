@@ -143,7 +143,15 @@ def merge_by_label(data_df: pd.DataFrame, config_df: pd.DataFrame, key: str = "l
         merged = merged.drop(columns=[cfg_key], errors="ignore")
 
     # Basic stats
-    matched = merged["Capacity"].notna().sum() if "Capacity" in merged.columns else merged[c.columns.difference([cfg_key])].notna().any(axis=1).sum()
+    # Check match based on a config column like 'Capacity' or any other column from config
+    check_col = "Capacity" if "Capacity" in merged.columns else (c.columns[0] if len(c.columns) > 0 else None)
+    
+    if check_col:
+         matched = merged[check_col].notna().sum()
+    else:
+         # Fallback if config has no other columns
+         matched = len(merged) 
+
     total = len(merged)
     unmatched = total - matched
 
@@ -302,10 +310,6 @@ with tabs[1]:
 
 
 # ---------------------------
-# Tab: Time Analysis
-# ---------------------------
-# ---------------------------
-# ---------------------------
 # Tab: Time Analysis (Đã cập nhật theo yêu cầu)
 # ---------------------------
 with tabs[2]:
@@ -327,94 +331,107 @@ with tabs[2]:
         st.markdown("##### 1. Bộ lọc dữ liệu")
         
         # A1. Lọc theo khoảng thời gian
-        min_date = df_time[date_col].min().date()
-        max_date = df_time[date_col].max().date()
-        
-        c_date1, c_date2 = st.columns(2)
-        with c_date1:
-            start_date = st.date_input("Từ ngày", value=min_date, min_value=min_date, max_value=max_date)
-        with c_date2:
-            end_date = st.date_input("Đến ngày", value=max_date, min_value=min_date, max_value=max_date)
-            
-        # A2. Các bộ lọc thuộc tính (Inverter, Capacity, Azimuth)
-        # Tạo danh sách unique values để đưa vào selectbox
-        # Lưu ý: Convert sang string để hiển thị cho đẹp và tránh lỗi sort
-        
-        all_inverters = sorted(df_time['Inverter'].dropna().astype(str).unique()) if 'Inverter' in df_time.columns else []
-        all_capacities = sorted(df_time['Capacity'].dropna().unique()) if 'Capacity' in df_time.columns else []
-        all_azimuths = sorted(df_time['String Azimuth'].dropna().unique()) if 'String Azimuth' in df_time.columns else []
-
-        f1, f2, f3 = st.columns(3)
-        with f1:
-            sel_inv = st.multiselect("Lọc Inverter", options=all_inverters)
-        with f2:
-            sel_cap = st.multiselect("Lọc Capacity", options=all_capacities)
-        with f3:
-            sel_azi = st.multiselect("Lọc Azimuth", options=all_azimuths)
-
-        # ---------------------------
-        # B. XỬ LÝ DATA THEO BỘ LỌC
-        # ---------------------------
-        
-        # 1. Lọc Time
-        mask = (df_time[date_col].dt.date >= start_date) & (df_time[date_col].dt.date <= end_date)
-        filtered_df = df_time.loc[mask]
-
-        # 2. Lọc Attributes (Nếu user không chọn gì thì lấy tất cả)
-        if sel_inv:
-            filtered_df = filtered_df[filtered_df['Inverter'].astype(str).isin(sel_inv)]
-        
-        if sel_cap:
-            filtered_df = filtered_df[filtered_df['Capacity'].isin(sel_cap)]
-            
-        if sel_azi:
-            filtered_df = filtered_df[filtered_df['String Azimuth'].isin(sel_azi)]
-
-        # ---------------------------
-        # C. VẼ BIỂU ĐỒ (LINE CHART)
-        # ---------------------------
-        st.markdown("##### 2. Biểu đồ biến thiên")
-        
-        if filtered_df.empty:
-            st.warning("Không có dữ liệu phù hợp với bộ lọc.")
+        # Handle cases where datetime column might have NaT (Not a Time)
+        df_time = df_time.dropna(subset=[date_col])
+        if df_time.empty:
+             st.warning("Dữ liệu trống sau khi lọc ngày.")
         else:
-            # Chọn chỉ số để vẽ (Mặc định là Performance)
-            metric_col = "Performance"
-            if "Performance" not in numeric_cols and len(numeric_cols) > 0:
-                metric_col = st.selectbox("Chọn chỉ số hiển thị trục Y", numeric_cols)
+            min_date = df_time[date_col].min().date()
+            max_date = df_time[date_col].max().date()
             
-            # Cảnh báo nếu quá nhiều dây (String) được chọn -> Vẽ sẽ bị rối
-            num_strings = filtered_df['label'].nunique()
-            st.caption(f"Đang hiển thị **{num_strings}** string(s) trên biểu đồ.")
+            c_date1, c_date2 = st.columns(2)
+            with c_date1:
+                start_date = st.date_input("Từ ngày", value=min_date, min_value=min_date, max_value=max_date)
+            with c_date2:
+                end_date = st.date_input("Đến ngày", value=max_date, min_value=min_date, max_value=max_date)
+                
+            # A2. Các bộ lọc thuộc tính (Inverter, Capacity, Azimuth)
+            # Tạo danh sách unique values để đưa vào selectbox
+            # Lưu ý: Convert sang string để hiển thị cho đẹp và tránh lỗi sort
             
-            if num_strings > 50:
-                st.warning(f"⚠️ Bạn đang chọn quá nhiều String ({num_strings}). Biểu đồ có thể bị chậm hoặc khó nhìn. Hãy lọc bớt Inverter hoặc Capacity.")
+            all_inverters = sorted(df_time['Inverter'].dropna().astype(str).unique()) if 'Inverter' in df_time.columns else []
+            all_capacities = sorted(df_time['Capacity'].dropna().unique()) if 'Capacity' in df_time.columns else []
+            all_azimuths = sorted(df_time['String Azimuth'].dropna().unique()) if 'String Azimuth' in df_time.columns else []
 
-            # Vẽ biểu đồ Line
-            # x: Ngày, y: Performance, color: label (tên string)
-            fig = px.line(
-                filtered_df, 
-                x=date_col, 
-                y=metric_col, 
-                color='label',
-                markers=True, # Hiển thị điểm tròn trên dòng để dễ nhìn dữ liệu ngày
-                hover_data=['Inverter', 'Capacity', 'String Azimuth'], # Khi rê chuột vào sẽ hiện thêm thông tin này
-                title=f"Biến thiên {metric_col} theo ngày (Day-by-Day)"
-            )
-            
-            # Tinh chỉnh biểu đồ cho đẹp
-            fig.update_layout(
-                xaxis_title="Ngày",
-                yaxis_title=metric_col,
-                legend_title="String Label",
-                hovermode="x unified" # Hiển thị so sánh tất cả các line tại 1 điểm ngày
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                sel_inv = st.multiselect("Lọc Inverter", options=all_inverters)
+            with f2:
+                sel_cap = st.multiselect("Lọc Capacity", options=all_capacities)
+            with f3:
+                sel_azi = st.multiselect("Lọc Azimuth", options=all_azimuths)
 
-            # Hiện bảng dữ liệu thô bên dưới nếu cần soi chi tiết
-            with st.expander("Xem dữ liệu chi tiết của biểu đồ"):
-                st.dataframe(filtered_df[[date_col, 'label', metric_col, 'Inverter', 'Capacity', 'String Azimuth']], use_container_width=True)
+            # ---------------------------
+            # B. XỬ LÝ DATA THEO BỘ LỌC
+            # ---------------------------
+            
+            # 1. Lọc Time
+            mask = (df_time[date_col].dt.date >= start_date) & (df_time[date_col].dt.date <= end_date)
+            filtered_df = df_time.loc[mask]
+
+            # 2. Lọc Attributes (Nếu user không chọn gì thì lấy tất cả)
+            if sel_inv:
+                filtered_df = filtered_df[filtered_df['Inverter'].astype(str).isin(sel_inv)]
+            
+            if sel_cap:
+                filtered_df = filtered_df[filtered_df['Capacity'].isin(sel_cap)]
+                
+            if sel_azi:
+                filtered_df = filtered_df[filtered_df['String Azimuth'].isin(sel_azi)]
+
+            # ---------------------------
+            # C. VẼ BIỂU ĐỒ (LINE CHART)
+            # ---------------------------
+            st.markdown("##### 2. Biểu đồ biến thiên")
+            
+            if filtered_df.empty:
+                st.warning("Không có dữ liệu phù hợp với bộ lọc.")
+            else:
+                # Chọn chỉ số để vẽ (Mặc định là Performance)
+                metric_col = "Performance"
+                if "Performance" not in numeric_cols and len(numeric_cols) > 0:
+                    metric_col = st.selectbox("Chọn chỉ số hiển thị trục Y", numeric_cols)
+                
+                # Cảnh báo nếu quá nhiều dây (String) được chọn -> Vẽ sẽ bị rối
+                num_strings = filtered_df['label'].nunique()
+                st.caption(f"Đang hiển thị **{num_strings}** string(s) trên biểu đồ.")
+                
+                if num_strings > 50:
+                    st.warning(f"⚠️ Bạn đang chọn quá nhiều String ({num_strings}). Biểu đồ có thể bị chậm hoặc khó nhìn. Hãy lọc bớt Inverter hoặc Capacity.")
+
+                # Vẽ biểu đồ Line
+                # x: Ngày, y: Performance, color: label (tên string)
+                fig = px.line(
+                    filtered_df, 
+                    x=date_col, 
+                    y=metric_col, 
+                    color='label',
+                    markers=True, # Hiển thị điểm tròn trên dòng để dễ nhìn dữ liệu ngày
+                    hover_data=['Inverter', 'Capacity', 'String Azimuth'], # Khi rê chuột vào sẽ hiện thêm thông tin này
+                    title=f"Biến thiên {metric_col} theo ngày (Day-by-Day)"
+                )
+                
+                # Tinh chỉnh biểu đồ cho đẹp
+                fig.update_layout(
+                    xaxis_title="Ngày",
+                    yaxis_title=metric_col,
+                    legend_title="String Label",
+                    hovermode="x unified" # Hiển thị so sánh tất cả các line tại 1 điểm ngày
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Hiện bảng dữ liệu thô bên dưới nếu cần soi chi tiết
+                with st.expander("Xem dữ liệu chi tiết của biểu đồ"):
+                    display_cols = [date_col, 'label', metric_col]
+                    extra_cols = ['Inverter', 'Capacity', 'String Azimuth']
+                    for c in extra_cols:
+                        if c in filtered_df.columns:
+                            display_cols.append(c)
+                            
+                    st.dataframe(filtered_df[display_cols], use_container_width=True)
+
+
 # ---------------------------
 # Tab: Attr Analysis
 # ---------------------------
@@ -434,44 +451,4 @@ with tabs[3]:
         num_col = None
         if numeric_cols:
             default_num = "Performance" if "Performance" in numeric_cols else numeric_cols[0]
-            num_col = st.selectbox("Cột số (numeric) để so sánh", options=numeric_cols, index=numeric_cols.index(default_num))
-
-        top_n = st.slider("Top N giá trị phổ biến", min_value=5, max_value=50, value=10, step=1)
-        chart_type = st.selectbox("Kiểu biểu đồ", options=["Count bar", "Treemap", "Box (numeric vs category)"], index=0)
-
-    if chart_type in ("Count bar", "Treemap"):
-        vc = df[cat_col].astype(str).value_counts(dropna=False).head(int(top_n)).reset_index()
-        vc.columns = [cat_col, "count"]
-
-        with right:
-            if chart_type == "Count bar":
-                fig = px.bar(vc, x=cat_col, y="count", title=f"Top {top_n} giá trị của {cat_col}")
-            else:
-                fig = px.treemap(vc, path=[cat_col], values="count", title=f"Treemap {cat_col} (Top {top_n})")
-            fig.update_layout(margin=dict(l=10, r=10, t=50, b=10))
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.dataframe(vc, use_container_width=True)
-
-    else:
-        if not numeric_cols or num_col is None:
-            st.info("Không có cột numeric để vẽ boxplot.")
-        else:
-            with right:
-                fig = px.box(df, x=cat_col, y=num_col, points="outliers", title=f"Phân phối {num_col} theo {cat_col}")
-                fig.update_layout(margin=dict(l=10, r=10, t=50, b=10))
-                st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("---")
-    st.markdown("### Tương quan (Correlation) giữa các cột số")
-    if len(numeric_cols) >= 2:
-        corr = df[numeric_cols].corr(numeric_only=True)
-        fig = px.imshow(corr, text_auto=True, aspect="auto", title="Correlation matrix")
-        fig.update_layout(margin=dict(l=10, r=10, t=50, b=10))
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Cần ít nhất 2 cột numeric để tính correlation.")
-
-
-st.sidebar.markdown("---")
-st.sidebar.caption("Gợi ý: Nếu deploy Streamlit Cloud, đảm bảo requirements.txt có 'plotly' và 'streamlit'.")
+            num_col = st.selectbox("Cột số (numeric)
