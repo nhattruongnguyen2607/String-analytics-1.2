@@ -1,243 +1,110 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from io import BytesIO
+with tabs[2]:
+    st.subheader("Phân tích theo thời gian (day-by-day theo từng label)")
 
-# ==========================================
-# CONFIGURATION & SETUP
-# ==========================================
-st.set_page_config(
-    page_title="Solar Data Engineering Tool",
-    page_icon="☀️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+    required_cols = ["date", "label", "Performance"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        st.error(f"Thiếu cột bắt buộc: {missing}. Cần có: date, label, Performance")
+    else:
+        # parse date mạnh hơn nếu cần
+        if "date" in df.columns and df["date"].dtype == "object":
+            df["date"] = pd.to_datetime(df["date"], errors="coerce", infer_datetime_format=True)
 
-# Custom CSS cho giao diện chuyên nghiệp hơn
-st.markdown("""
-    <style>
-    .main {
-        background-color: #f5f5f5;
-    }
-    .stButton>button {
-        width: 100%;
-    }
-    .metric-card {
-        background-color: white;
-        padding: 15px;
-        border-radius: 5px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
-@st.cache_data
-def load_data(file):
-    """
-    Hàm đọc dữ liệu thông minh, hỗ trợ cả CSV và Excel.
-    Sử dụng cache để không phải load lại file mỗi khi tương tác UI.
-    """
-    try:
-        if file.name.endswith('.csv'):
-            return pd.read_csv(file)
-        elif file.name.endswith(('.xls', '.xlsx')):
-            return pd.read_excel(file)
+        if df["date"].isna().all():
+            st.error("Cột 'date' không parse được (toàn NA). Hãy kiểm tra format ngày.")
         else:
-            return None
-    except Exception as e:
-        st.error(f"Lỗi khi đọc file {file.name}: {e}")
-        return None
+            left, right = st.columns([1, 2])
 
-def convert_df_to_csv(df):
-    """
-    Chuyển DataFrame thành CSV để download.
-    """
-    return df.to_csv(index=False).encode('utf-8')
+            tmp0 = df.dropna(subset=["date"]).copy()
+            tmp0["label"] = tmp0["label"].astype(str)
 
-# ==========================================
-# SIDEBAR: UPLOAD & SETTINGS
-# ==========================================
-st.sidebar.header("📂 Data Input")
-st.sidebar.info("Upload dữ liệu để bắt đầu quy trình ETL.")
+            min_date = tmp0["date"].min().date()
+            max_date = tmp0["date"].max().date()
 
-# Bước 1: Upload Files
-uploaded_file_a = st.sidebar.file_uploader("1. Upload File Data (Performance)", type=['csv', 'xlsx'])
-uploaded_file_b = st.sidebar.file_uploader("2. Upload File Config (Plant Info)", type=['csv', 'xlsx'])
+            with left:
+                st.markdown("#### Bộ lọc")
 
-# ==========================================
-# MAIN INTERFACE
-# ==========================================
-st.title("📊 Solar Data Merge & Analytics Platform")
-st.markdown("---")
-
-if uploaded_file_a and uploaded_file_b:
-    # --- Load Data ---
-    df_a = load_data(uploaded_file_a)
-    df_b = load_data(uploaded_file_b)
-
-    if df_a is not None and df_b is not None:
-        
-        # --- Bước 2: Preview Data (Song song) ---
-        st.subheader("1. Data Preview")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.info(f"File A: {uploaded_file_a.name}")
-            st.write(f"Shape: {df_a.shape}")
-            st.dataframe(df_a.head(), use_container_width=True)
-            
-        with col2:
-            st.info(f"File B: {uploaded_file_b.name}")
-            st.write(f"Shape: {df_b.shape}")
-            st.dataframe(df_b.head(), use_container_width=True)
-
-        st.markdown("---")
-
-        # --- Bước 3: Merge Settings ---
-        st.sidebar.header("⚙️ Merge Configuration")
-        
-        # Tự động phát hiện cột chung, ưu tiên 'label' theo yêu cầu
-        common_cols = list(set(df_a.columns) & set(df_b.columns))
-        default_idx_a = df_a.columns.get_loc('label') if 'label' in df_a.columns else 0
-        default_idx_b = df_b.columns.get_loc('label') if 'label' in df_b.columns else 0
-
-        key_col_a = st.sidebar.selectbox("Key Column (File A)", df_a.columns, index=default_idx_a)
-        key_col_b = st.sidebar.selectbox("Key Column (File B)", df_b.columns, index=default_idx_b)
-        
-        merge_mode = st.sidebar.radio("Kiểu gộp (Merge Type)", ["inner", "left", "right", "outer"], index=0)
-
-        # --- Bước 4: Process Merge ---
-        if st.sidebar.button("🚀 Thực hiện Gộp Dữ liệu (Merge)", type="primary"):
-            try:
-                # Merge Data
-                merged_df = pd.merge(
-                    df_a, 
-                    df_b, 
-                    left_on=key_col_a, 
-                    right_on=key_col_b, 
-                    how=merge_mode
+                # 1) lọc ngày
+                date_range = st.date_input(
+                    "Chọn khoảng ngày phân tích",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
                 )
-                
-                # Lưu vào session state để dùng cho các bước sau mà không cần merge lại
-                st.session_state['merged_df'] = merged_df
-                st.success("Gộp dữ liệu thành công!")
-                
-            except Exception as e:
-                st.error(f"Lỗi khi gộp dữ liệu: {e}")
-
-        # --- Hiển thị kết quả sau khi Merge (Nếu có trong session state) ---
-        if 'merged_df' in st.session_state:
-            merged_df = st.session_state['merged_df']
-
-            st.subheader("2. Kết quả Gộp (Merged Data)")
-            
-            # --- Bước 5: Download & Stats ---
-            col_res1, col_res2 = st.columns([3, 1])
-            with col_res1:
-                st.dataframe(merged_df, use_container_width=True)
-            
-            with col_res2:
-                st.write("**Thống kê nhanh:**")
-                st.write(f"Tổng số dòng: `{len(merged_df)}`")
-                st.write(f"Tổng số cột: `{len(merged_df.columns)}`")
-                
-                csv_data = convert_df_to_csv(merged_df)
-                st.download_button(
-                    label="⬇️ Tải file kết quả (CSV)",
-                    data=csv_data,
-                    file_name="merged_solar_data.csv",
-                    mime="text/csv",
-                )
-
-            st.markdown("---")
-            
-            # ==========================================
-            # DASHBOARD: LOW PERFORMANCE ANALYSIS
-            # ==========================================
-            st.header("📉 Dashboard: Low Performance Analysis")
-            
-            # Kiểm tra xem các cột cần thiết có tồn tại không
-            required_cols = ['Performance', 'Plant'] # Dựa trên file user cung cấp
-            if all(col in merged_df.columns for col in required_cols):
-                
-                # --- Controls cho Dashboard ---
-                col_d1, col_d2, col_d3 = st.columns(3)
-                with col_d1:
-                    threshold = st.slider("Ngưỡng Performance thấp (Threshold)", 0.0, 1.0, 0.80, step=0.01)
-                
-                # Lọc dữ liệu Low Performance
-                low_perf_df = merged_df[merged_df['Performance'] < threshold]
-                
-                with col_d2:
-                    st.metric("Số lượng Label lỗi (Low Perf)", len(low_perf_df))
-                with col_d3:
-                    avg_perf = low_perf_df['Performance'].mean() if not low_perf_df.empty else 0
-                    st.metric("Performance trung bình nhóm lỗi", f"{avg_perf:.2f}")
-
-                # --- Visualization ---
-                if not low_perf_df.empty:
-                    col_chart1, col_chart2 = st.columns(2)
-                    
-                    # Chart 1: Số lượng lỗi theo Plant
-                    with col_chart1:
-                        st.subheader("Phân bố lỗi theo Nhà máy (Plant)")
-                        error_by_plant = low_perf_df['Plant'].value_counts().reset_index()
-                        error_by_plant.columns = ['Plant', 'Count']
-                        
-                        fig1 = px.bar(
-                            error_by_plant, 
-                            x='Plant', 
-                            y='Count',
-                            color='Count',
-                            text='Count',
-                            title=f"Số lượng Label < {threshold} theo Plant",
-                            color_continuous_scale='Reds'
-                        )
-                        st.plotly_chart(fig1, use_container_width=True)
-
-                    # Chart 2: Boxplot Performance theo Plant (để xem phân tán)
-                    with col_chart2:
-                        st.subheader("Phân tán Performance nhóm lỗi")
-                        fig2 = px.box(
-                            low_perf_df, 
-                            x='Plant', 
-                            y='Performance', 
-                            color='Plant',
-                            title=f"Boxplot Performance (Dưới ngưỡng {threshold})",
-                            points="all" # Hiển thị cả các điểm dữ liệu
-                        )
-                        st.plotly_chart(fig2, use_container_width=True)
-
-                    # --- Detail Table ---
-                    st.subheader("Chi tiết các Label có Performance thấp")
-                    
-                    # Cho phép lọc theo Plant cụ thể
-                    plant_list = ["All"] + list(low_perf_df['Plant'].unique())
-                    selected_plant = st.selectbox("Lọc theo Plant:", plant_list)
-                    
-                    if selected_plant != "All":
-                        display_df = low_perf_df[low_perf_df['Plant'] == selected_plant]
-                    else:
-                        display_df = low_perf_df
-                    
-                    # Hiển thị các cột quan trọng trước
-                    cols_order = ['date', 'Plant', 'label', 'Performance', 'Capacity', 'Inverter']
-                    # Chỉ lấy các cột tồn tại
-                    cols_to_show = [c for c in cols_order if c in display_df.columns]
-                    
-                    st.dataframe(
-                        display_df[cols_to_show].style.format({"Performance": "{:.2f}"}).background_gradient(subset=['Performance'], cmap='Reds_r'),
-                        use_container_width=True
-                    )
+                if isinstance(date_range, tuple) and len(date_range) == 2:
+                    start_date, end_date = date_range
                 else:
-                    st.success(f"Tuyệt vời! Không có label nào có Performance dưới {threshold}.")
-            else:
-                st.warning("Dữ liệu sau khi gộp thiếu cột 'Performance' hoặc 'Plant'. Vui lòng kiểm tra lại file đầu vào.")
+                    start_date, end_date = min_date, max_date
 
-else:
-    # Màn hình chờ khi chưa upload
-    st.info("👈 Vui lòng upload File A và File B từ thanh bên (Sidebar) để bắt đầu.")
+                # 2) lọc inverter
+                inverter_vals = sorted(tmp0["Inverter"].dropna().astype(str).unique().tolist()) if "Inverter" in tmp0.columns else []
+                inv_sel = st.multiselect("Inverter", options=inverter_vals, default=inverter_vals[:]) if inverter_vals else []
+
+                # 3) lọc string azimuth
+                az_vals = sorted(tmp0["String Azimuth"].dropna().astype(str).unique().tolist()) if "String Azimuth" in tmp0.columns else []
+                az_sel = st.multiselect("String Azimuth", options=az_vals, default=az_vals[:]) if az_vals else []
+
+                # 4) lọc capacity (range nếu là numeric, nếu không thì multiselect)
+                cap_mode, cap_min, cap_max, cap_sel = None, None, None, None
+                if "Capacity" in tmp0.columns:
+                    if pd.api.types.is_numeric_dtype(tmp0["Capacity"]):
+                        cap_mode = "range"
+                        cap_min0 = float(np.nanmin(tmp0["Capacity"].values))
+                        cap_max0 = float(np.nanmax(tmp0["Capacity"].values))
+                        cap_min, cap_max = st.slider(
+                            "Capacity (range)",
+                            min_value=cap_min0,
+                            max_value=cap_max0,
+                            value=(cap_min0, cap_max0),
+                        )
+                    else:
+                        cap_mode = "set"
+                        cap_vals = sorted(tmp0["Capacity"].dropna().astype(str).unique().tolist())
+                        cap_sel = st.multiselect("Capacity", options=cap_vals, default=cap_vals[:])
+
+                # 5) chọn label để vẽ (đỡ quá nhiều line)
+                labels = sorted(tmp0["label"].unique().tolist())
+                default_labels = labels[: min(10, len(labels))]
+                label_sel = st.multiselect("Label", options=labels, default=default_labels)
+
+                agg = st.selectbox("Phép tổng hợp theo ngày", options=["mean", "median", "min", "max"], index=0)
+                show_table = st.checkbox("Hiện bảng sau filter + group", value=False)
+
+            # --- apply filters ---
+            tmp = tmp0[(tmp0["date"].dt.date >= start_date) & (tmp0["date"].dt.date <= end_date)].copy()
+
+            if inverter_vals and inv_sel:
+                tmp = tmp[tmp["Inverter"].astype(str).isin(inv_sel)]
+            if az_vals and az_sel:
+                tmp = tmp[tmp["String Azimuth"].astype(str).isin(az_sel)]
+
+            if "Capacity" in tmp.columns:
+                if cap_mode == "range" and cap_min is not None and cap_max is not None:
+                    tmp = tmp[(tmp["Capacity"] >= cap_min) & (tmp["Capacity"] <= cap_max)]
+                elif cap_mode == "set" and cap_sel is not None:
+                    tmp = tmp[tmp["Capacity"].astype(str).isin(cap_sel)]
+
+            if label_sel:
+                tmp = tmp[tmp["label"].astype(str).isin(label_sel)]
+
+            if tmp.empty:
+                st.warning("Không có dữ liệu sau khi lọc.")
+            else:
+                # day-by-day theo label
+                tmp["_day"] = tmp["date"].dt.to_period("D").dt.to_timestamp()
+                ts = tmp.groupby(["_day", "label"])["Performance"].agg(agg).reset_index()
+
+                with right:
+                    fig = px.line(
+                        ts,
+                        x="_day",
+                        y="Performance",
+                        color="label",
+                        markers=True,
+                        title=f"Performance ({agg}) theo ngày - mỗi label là 1 đường",
+                    )
+                    fig.update_layout(margin=dict(l=10, r=10, t=50, b=10), legend_title_text="label")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                if show_table:
+                    st.dataframe(ts.sort_values(["_day", "label"]), use_container_width=True)
