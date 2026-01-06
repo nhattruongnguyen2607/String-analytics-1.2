@@ -482,47 +482,117 @@ with tab_analysis:
         chart_type = st.selectbox("Chart type", options=["Histogram", "Boxplot"], index=0, key="chart_type")
 
         st.markdown("---")
-        st.caption("Low-performance dashboard filters")
+        st.caption("Low-performance dashboard filters (cascading)")
 
-        # Plant selector
+        # Cascading options: Plant -> Inverter -> (String Azimuth, Capacity)
+        opts_df = merged.copy()
+
+        def _keep_valid(key: str, options: List[str]) -> List[str]:
+            cur = st.session_state.get(key, [])
+            if cur is None:
+                cur = []
+            cur = [str(x) for x in cur]
+            return [x for x in cur if x in options]
+
+        # 1) Plant selector
         plant_sel: List[str] = []
         if plant_col:
-            plants = sorted(merged[plant_col].dropna().astype(str).unique().tolist())
-            plant_sel = st.multiselect("Plant", options=plants, default=plants[:1] if plants else [], key="plant_sel")
+            plants = sorted(opts_df[plant_col].dropna().astype(str).unique().tolist())
+            # ensure current selection is valid
+            if "plant_sel" in st.session_state:
+                st.session_state["plant_sel"] = _keep_valid("plant_sel", plants)
+            default_plants = st.session_state.get("plant_sel", plants[:1] if plants else [])
+            plant_sel = st.multiselect("Plant", options=plants, default=default_plants, key="plant_sel")
 
-        bottom_n = st.number_input("Bottom N labels / Plant", min_value=3, max_value=50, value=10, step=1, key="bottom_n")
+        df_p = opts_df
+        if plant_col and plant_sel:
+            df_p = df_p[df_p[plant_col].astype(str).isin([str(p) for p in plant_sel])]
 
-        # Inverter / Azimuth
+        bottom_n = st.number_input(
+            "Bottom N labels / Plant", min_value=3, max_value=50, value=10, step=1, key="bottom_n"
+        )
+
+        # 2) Inverter selector (depends on Plant)
         inv_sel: List[str] = []
         if inverter_col:
-            inv_vals = sorted(merged[inverter_col].dropna().astype(str).unique().tolist())
-            inv_sel = st.multiselect("Inverter", options=inv_vals, default=inv_vals, key="inv_sel")
+            inv_vals = sorted(df_p[inverter_col].dropna().astype(str).unique().tolist())
+            if "inv_sel" in st.session_state:
+                st.session_state["inv_sel"] = _keep_valid("inv_sel", inv_vals)
+            default_inv = st.session_state.get("inv_sel", inv_vals)
+            inv_sel = st.multiselect("Inverter", options=inv_vals, default=default_inv, key="inv_sel")
 
+        df_pi = df_p
+        if inverter_col and inv_sel:
+            df_pi = df_pi[df_pi[inverter_col].astype(str).isin(inv_sel)]
+
+        # 3) String Azimuth selector (depends on Plant + Inverter)
         az_sel: List[str] = []
         if az_col:
-            az_vals = sorted(merged[az_col].dropna().astype(str).unique().tolist())
-            az_sel = st.multiselect("String Azimuth", options=az_vals, default=az_vals, key="az_sel")
+            az_vals = sorted(df_pi[az_col].dropna().astype(str).unique().tolist())
+            if "az_sel" in st.session_state:
+                st.session_state["az_sel"] = _keep_valid("az_sel", az_vals)
+            default_az = st.session_state.get("az_sel", az_vals)
+            az_sel = st.multiselect("String Azimuth", options=az_vals, default=default_az, key="az_sel")
 
-        # Date range
-        date_range = None
-        if date_col:
-            tmpd = pd.to_datetime(merged[date_col], errors="coerce", infer_datetime_format=True)
-            if tmpd.notna().any():
-                dmin = tmpd.min().date()
-                dmax = tmpd.max().date()
-                date_range = st.date_input("Khoảng ngày", value=(dmin, dmax), min_value=dmin, max_value=dmax, key="date_range")
+        df_pia = df_pi
+        if az_col and az_sel:
+            df_pia = df_pia[df_pia[az_col].astype(str).isin(az_sel)]
 
-        # Capacity filter
+        # 4) Capacity (depends on Plant + Inverter + Azimuth)
         cap_range = None
         cap_set = None
         if capacity_col:
-            if pd.api.types.is_numeric_dtype(merged[capacity_col]):
-                cmin = float(np.nanmin(merged[capacity_col].values))
-                cmax = float(np.nanmax(merged[capacity_col].values))
-                cap_range = st.slider("Capacity (range)", min_value=cmin, max_value=cmax, value=(cmin, cmax), key="cap_range")
+            if pd.api.types.is_numeric_dtype(df_pia[capacity_col]):
+                cap_series = pd.to_numeric(df_pia[capacity_col], errors="coerce").dropna()
+                if not cap_series.empty:
+                    cmin = float(cap_series.min())
+                    cmax = float(cap_series.max())
+                    prev = st.session_state.get("cap_range")
+                    if isinstance(prev, (list, tuple)) and len(prev) == 2:
+                        lo = max(cmin, float(prev[0]))
+                        hi = min(cmax, float(prev[1]))
+                        if lo > hi:
+                            lo, hi = cmin, cmax
+                        st.session_state["cap_range"] = (lo, hi)
+                    cap_range = st.slider(
+                        "Capacity (range)", min_value=cmin, max_value=cmax,
+                        value=st.session_state.get("cap_range", (cmin, cmax)), key="cap_range"
+                    )
+                else:
+                    st.info("Không có dữ liệu Capacity sau khi lọc Plant/Inverter/Azimuth.")
             else:
-                cap_vals = sorted(merged[capacity_col].dropna().astype(str).unique().tolist())
-                cap_set = st.multiselect("Capacity", options=cap_vals, default=cap_vals, key="cap_set")
+                cap_vals = sorted(df_pia[capacity_col].dropna().astype(str).unique().tolist())
+                if "cap_set" in st.session_state:
+                    cur = st.session_state.get("cap_set", [])
+                    st.session_state["cap_set"] = [str(x) for x in cur if str(x) in cap_vals]
+                cap_set = st.multiselect("Capacity", options=cap_vals, default=st.session_state.get("cap_set", cap_vals), key="cap_set")
+
+        # Date range (optional) - bound depends on current cascading subset
+        date_range = None
+        if date_col:
+            tmpd = pd.to_datetime(df_pia[date_col], errors="coerce", infer_datetime_format=True)
+            if tmpd.notna().any():
+                dmin = tmpd.min().date()
+                dmax = tmpd.max().date()
+                prevd = st.session_state.get("date_range")
+                if isinstance(prevd, (list, tuple)) and len(prevd) == 2:
+                    s0, e0 = prevd
+                    try:
+                        s0 = max(dmin, s0)
+                        e0 = min(dmax, e0)
+                        if s0 > e0:
+                            s0, e0 = dmin, dmax
+                        st.session_state["date_range"] = (s0, e0)
+                    except Exception:
+                        st.session_state["date_range"] = (dmin, dmax)
+
+                date_range = st.date_input(
+                    "Khoảng ngày",
+                    value=st.session_state.get("date_range", (dmin, dmax)),
+                    min_value=dmin,
+                    max_value=dmax,
+                    key="date_range",
+                )
 
         # Store settings
         analysis_settings = {
